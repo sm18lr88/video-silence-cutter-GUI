@@ -1,5 +1,7 @@
 # video-silence-cutter-GUI
 
+A tool for removing silences from a video.
+
 GUI adaptation of the Python Video Silence Cutter, originally by [DarkTrick](https://github.com/DarkTrick/python-video-silence-cutter). This tool provides an easy-to-use interface for video silence detection and cutting.
 
 <img src="https://github.com/sm18lr88/video-silence-cutter-GUI/assets/64564447/83a07cde-29ec-4638-9493-923fb8a530ae" width="300">
