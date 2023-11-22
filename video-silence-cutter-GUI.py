@@ -109,7 +109,7 @@ class SilenceCutterApp(tk.Tk):
         self.save_as_button = tk.Button(self, text="Save As", command=self.save_as)
         self.save_as_button.pack()
 
-        self.db_label = tk.Label(self, text="Decibel Level for silence threshold detection (default -30):")
+        self.db_label = tk.Label(self, text="Decibel Level for silence threshold detection (default -30 dB):")
         self.db_label.pack()
         self.db_entry = tk.Entry(self, width=50)
         self.db_entry.insert(0, "-30")
