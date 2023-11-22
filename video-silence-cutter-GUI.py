@@ -3,10 +3,16 @@ import tempfile
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
+import webbrowser
 
 def findSilences(filename, dB=-35):
-    command = ["ffmpeg", "-i", filename, "-af", "silencedetect=n=" + str(dB) + "dB:d=0.5", "-f", "null", "-"]
-    output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        command = ["ffmpeg", "-i", filename, "-af", "silencedetect=n=" + str(dB) + "dB:d=0.5", "-f", "null", "-"]
+        output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as e:
+        messagebox.showerror("Error", f"An error occurred while finding silences: {e}")
+        return []
+
     s = str(output)
     lines = s.split("\\r")
     time_list = []
@@ -21,8 +27,13 @@ def findSilences(filename, dB=-35):
     return time_list
 
 def getVideoDuration(filename):
-    command = ["ffprobe", "-i", filename, "-v", "quiet", "-show_entries", "format=duration", "-hide_banner", "-of", "default=noprint_wrappers=1:nokey=1"]
-    output = subprocess.run(command, stdout=subprocess.PIPE)
+    try:
+        command = ["ffprobe", "-i", filename, "-v", "quiet", "-show_entries", "format=duration", "-hide_banner", "-of", "default=noprint_wrappers=1:nokey=1"]
+        output = subprocess.run(command, stdout=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as e:
+        messagebox.showerror("Error", f"An error occurred while getting video duration: {e}")
+        return 0
+
     s = str(output.stdout, "UTF-8")
     return float(s)
 
@@ -55,40 +66,33 @@ def writeFile(filename, content):
         file.write(str(content))
 
 def ffmpeg_run(file, videoFilter, audioFilter, outfile):
-    # These lines remain the same - they create temporary files for filters
-    vFile = tempfile.NamedTemporaryFile(mode="w", encoding="UTF-8", prefix="silence_video")
-    aFile = tempfile.NamedTemporaryFile(mode="w", encoding="UTF-8", prefix="silence_audio")
-    videoFilter_file = vFile.name
-    audioFilter_file = aFile.name
-    vFile.close()
-    aFile.close()
-    writeFile(videoFilter_file, videoFilter)
-    writeFile(audioFilter_file, audioFilter)
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="UTF-8", prefix="silence_video", delete=False) as vFile, \
+             tempfile.NamedTemporaryFile(mode="w", encoding="UTF-8", prefix="silence_audio", delete=False) as aFile:
+            writeFile(vFile.name, videoFilter)
+            writeFile(aFile.name, audioFilter)
 
-    # This is the modified FFmpeg command
-    # -hwaccel cuda: Enables CUDA hardware acceleration for decoding (if supported by your FFmpeg build and GPU)
-    # -c:v h264_nvenc: Use the NVENC H.264 encoder for encoding the output video (requires NVIDIA GPU)
-    command = ["ffmpeg", "-hwaccel", "cuda", "-i", file,
-               "-filter_script:v", videoFilter_file,
-               "-filter_script:a", audioFilter_file,
-               "-c:v", "h264_nvenc", outfile]
+            command = ["ffmpeg", "-hwaccel", "cuda", "-i", file,
+                       "-filter_script:v", vFile.name,
+                       "-filter_script:a", aFile.name,
+                       "-c:v", "h264_nvenc", outfile]
 
-    # Running the modified command
-    subprocess.run(command)
-
-    # Cleaning up the temporary files
-    vFile.close()
-    aFile.close()
+            subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        messagebox.showerror("Error", f"An error occurred while processing the file: {e}")
 
 def cut_silences(infile, outfile, dB=-35):
     silences = findSilences(infile, dB)
+    if not silences:
+        return
     duration = getVideoDuration(infile)
+    if duration == 0:
+        return
     videoSegments = getSectionsOfNewVideo(silences, duration)
     videoFilter = getFileContent_videoFilter(videoSegments)
     audioFilter = getFileContent_audioFilter(videoSegments)
     ffmpeg_run(infile, videoFilter, audioFilter, outfile)
 
-# Tkinter GUI Application
 class SilenceCutterApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -102,7 +106,7 @@ class SilenceCutterApp(tk.Tk):
         self.browse_button = tk.Button(self, text="Browse", command=self.browse_file)
         self.browse_button.pack()
 
-        self.outfile_label = tk.Label(self, text="Output File:")
+        self.outfile_label = tk.Label(self, text="Output File: (file conversion possible)")
         self.outfile_label.pack()
         self.outfile_entry = tk.Entry(self, width=50)
         self.outfile_entry.pack()
@@ -127,7 +131,13 @@ class SilenceCutterApp(tk.Tk):
         self.infile_entry.insert(0, filename)
 
     def save_as(self):
-        outfile = filedialog.asksaveasfilename(title="Save As", filetypes=[("Media files", "*.*")])
+        infile = self.infile_entry.get()
+        default_ext = os.path.splitext(infile)[1] if infile else ''
+        outfile = filedialog.asksaveasfilename(
+            title="Save As", 
+            filetypes=[("Media files", f"*{default_ext}"), ("All files", "*.*")],
+            defaultextension=default_ext
+        )
         self.outfile_entry.delete(0, tk.END)
         self.outfile_entry.insert(0, outfile)
 
@@ -142,12 +152,10 @@ class SilenceCutterApp(tk.Tk):
 
         try:
             db_value = float(db)
+            cut_silences(infile, outfile, db_value)
+            messagebox.showinfo("Success", "Processing completed.")
         except ValueError:
             messagebox.showerror("Error", "Invalid decibel level for silence threshold.")
-            return
-
-        cut_silences(infile, outfile, db_value)
-        messagebox.showinfo("Success", "Processing completed.")
 
     def show_help(self):
         help_text = """
@@ -158,6 +166,7 @@ class SilenceCutterApp(tk.Tk):
         -40 dB: Cuts are almost not recognizable.
         -50 dB: Cuts are almost not recognizable and nothing if there's background noise.
         Dependencies: ffmpeg, ffprobe
+        For more information on supported formats, visit: https://ffmpeg.org/ffmpeg-formats.html
         """
         messagebox.showinfo("Help", help_text)
 
